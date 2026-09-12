@@ -10,6 +10,9 @@ import {
   Platform,
 } from "react-native";
 import { router } from "expo-router";
+import auth, {
+  FirebaseAuthTypes,
+} from "@react-native-firebase/auth";
 
 type Step = "phone" | "otp" | "mpin" | "confirm";
 
@@ -21,40 +24,73 @@ export default function RegisterScreen() {
   const [mpin, setMpin] = useState("");
   const [confirmMpin, setConfirmMpin] = useState("");
 
-  const handleContinue = () => {
-    if (step === "phone") {
-      if (phone.length === 10) {
-        setStep("otp");
-      }
+  function otpHandler() {
+    
+  }
+
+  const [confirmation, setConfirmation] =
+  useState<FirebaseAuthTypes.ConfirmationResult | null>(null);
+
+  const handleContinue = async () => {
+  if (step === "phone") {
+    if (phone.length !== 10) {
       return;
     }
 
-    if (step === "otp") {
-      if (otp.length === 6) {
-        setStep("mpin");
-      }
+    try {
+      const phoneNumber = `+91${phone}`;
+
+      const confirmationResult =
+        await auth().signInWithPhoneNumber(phoneNumber);
+
+      setConfirmation(confirmationResult);
+      setStep("otp");
+
+      console.log("OTP sent");
+    } catch (error) {
+      console.error("OTP error:", error);
+    }
+
+    return;
+  }
+
+  if (step === "otp") {
+    if (otp.length !== 6 || !confirmation) {
       return;
     }
 
-    if (step === "mpin") {
-      if (mpin.length === 6) {
-        setStep("confirm");
-      }
-      return;
+    try {
+      const userCredential = await confirmation.confirm(otp);
+
+      console.log("Firebase user:", userCredential.user.uid);
+
+      setStep("mpin");
+    } catch (error) {
+      console.error("Invalid OTP:", error);
     }
 
-    if (step === "confirm") {
-      if (confirmMpin === mpin && confirmMpin.length === 6) {
-        console.log({
-          phone,
-          mpin,
-        });
+    return;
+  }
 
-        // Later:
-        // POST /auth/register
-      }
+  if (step === "mpin") {
+    if (mpin.length === 6) {
+      setStep("confirm");
     }
-  };
+
+    return;
+  }
+
+  if (step === "confirm") {
+    if (confirmMpin === mpin && confirmMpin.length === 6) {
+      console.log({
+        phone,
+        mpin,
+      });
+
+      // Call your Spring Boot /auth/register here
+    }
+  }
+};
 
   const getTitle = () => {
     switch (step) {
