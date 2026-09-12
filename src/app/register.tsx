@@ -1,22 +1,28 @@
+
 import React, { useState } from "react";
 import {
   View,
   Text,
   TextInput,
-  Pressable,
+  TouchableOpacity,
   StyleSheet,
-  SafeAreaView,
   KeyboardAvoidingView,
   Platform,
+  ActivityIndicator,
+  Alert,
 } from "react-native";
-import { router } from "expo-router";
-import auth, {
-  FirebaseAuthTypes,
+
+import {
+  getAuth,
+  signInWithPhoneNumber,
+  ConfirmationResult,
 } from "@react-native-firebase/auth";
+
+const auth = getAuth();
 
 type Step = "phone" | "otp" | "mpin" | "confirm";
 
-export default function RegisterScreen() {
+export default function Register() {
   const [step, setStep] = useState<Step>("phone");
 
   const [phone, setPhone] = useState("");
@@ -24,74 +30,219 @@ export default function RegisterScreen() {
   const [mpin, setMpin] = useState("");
   const [confirmMpin, setConfirmMpin] = useState("");
 
-  function otpHandler() {
-    
-  }
-
   const [confirmation, setConfirmation] =
-  useState<FirebaseAuthTypes.ConfirmationResult | null>(null);
+    useState<ConfirmationResult | null>(null);
 
-  const handleContinue = async () => {
-  if (step === "phone") {
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  // --------------------------------
+  // SEND OTP
+  // --------------------------------
+  const sendOtp = async () => {
     if (phone.length !== 10) {
+      setError("Enter a valid 10-digit mobile number");
       return;
     }
 
     try {
+      setLoading(true);
+      setError("");
+
       const phoneNumber = `+91${phone}`;
 
-      const confirmationResult =
-        await auth().signInWithPhoneNumber(phoneNumber);
+      console.log("Sending OTP to:", phoneNumber);
 
-      setConfirmation(confirmationResult);
+      const result = await signInWithPhoneNumber(
+        auth,
+        phoneNumber
+      );
+
+      setConfirmation(result);
       setStep("otp");
 
-      console.log("OTP sent");
-    } catch (error) {
-      console.error("OTP error:", error);
+      console.log("OTP sent successfully");
+    } catch (err: any) {
+      console.log("OTP error:", err);
+
+      setError(
+        err?.message ||
+          "Failed to send OTP. Please try again."
+      );
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // --------------------------------
+  // VERIFY OTP
+  // --------------------------------
+  const verifyOtp = async () => {
+    if (otp.length !== 6) {
+      setError("Enter the 6-digit OTP");
+      return;
     }
 
-    return;
-  }
-
-  if (step === "otp") {
-    if (otp.length !== 6 || !confirmation) {
+    if (!confirmation) {
+      setError("OTP session expired. Please request OTP again.");
+      setStep("phone");
       return;
     }
 
     try {
-      const userCredential = await confirmation.confirm(otp);
+      setLoading(true);
+      setError("");
 
-      console.log("Firebase user:", userCredential.user.uid);
+      console.log("Verifying OTP...");
+
+      const result = await confirmation.confirm(otp);
+
+      console.log("Phone verified successfully");
+
+      const user = result.user;
+
+      console.log("Firebase UID:", user.uid);
 
       setStep("mpin");
-    } catch (error) {
-      console.error("Invalid OTP:", error);
+    } catch (err: any) {
+      console.log("OTP verification error:", err);
+
+      setError(
+        err?.message ||
+          "Invalid OTP. Please check the OTP and try again."
+      );
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // --------------------------------
+  // MPIN
+  // --------------------------------
+  const continueMpin = () => {
+    if (mpin.length !== 6) {
+      setError("MPIN must contain 6 digits");
+      return;
     }
 
-    return;
-  }
+    setError("");
+    setStep("confirm");
+  };
 
-  if (step === "mpin") {
-    if (mpin.length === 6) {
-      setStep("confirm");
+  // --------------------------------
+  // COMPLETE REGISTRATION
+  // --------------------------------
+  const completeRegistration = async () => {
+    if (confirmMpin.length !== 6) {
+      setError("Enter your 6-digit MPIN again");
+      return;
     }
 
-    return;
-  }
+    if (mpin !== confirmMpin) {
+      setError("MPINs do not match");
+      return;
+    }
 
-  if (step === "confirm") {
-    if (confirmMpin === mpin && confirmMpin.length === 6) {
+    try {
+      setLoading(true);
+      setError("");
+
+      /*
+       * Firebase phone authentication is already completed.
+       *
+       * Get Firebase ID token.
+       *
+       * Later you will send this token to your
+       * Spring Boot backend.
+       */
+
+      const currentUser = auth.currentUser;
+
+      if (!currentUser) {
+        setError("Firebase authentication session not found");
+        return;
+      }
+
+      const firebaseToken = await currentUser.getIdToken();
+
+      console.log("Firebase token received");
+
+      /*
+       * TODO:
+       *
+       * Send registration data to Spring Boot.
+       *
+       * Example:
+       *
+       * const response = await fetch(
+       *   "http://YOUR-PC-IP:8080/auth/register",
+       *   {
+       *     method: "POST",
+       *     headers: {
+       *       "Content-Type": "application/json",
+       *       "Authorization": `Bearer ${firebaseToken}`,
+       *     },
+       *     body: JSON.stringify({
+       *       phone,
+       *       mpin,
+       *     }),
+       *   }
+       * );
+       *
+       */
+
       console.log({
         phone,
         mpin,
+        firebaseToken,
       });
 
-      // Call your Spring Boot /auth/register here
-    }
-  }
-};
+      Alert.alert(
+        "Registration successful",
+        "Your account has been created."
+      );
 
+    } catch (err: any) {
+      console.log("Registration error:", err);
+
+      setError(
+        err?.message ||
+          "Registration failed. Please try again."
+      );
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // --------------------------------
+  // CONTINUE BUTTON
+  // --------------------------------
+  const handleContinue = async () => {
+    if (loading) return;
+
+    if (step === "phone") {
+      await sendOtp();
+      return;
+    }
+
+    if (step === "otp") {
+      await verifyOtp();
+      return;
+    }
+
+    if (step === "mpin") {
+      continueMpin();
+      return;
+    }
+
+    if (step === "confirm") {
+      await completeRegistration();
+    }
+  };
+
+  // --------------------------------
+  // STEP TITLE
+  // --------------------------------
   const getTitle = () => {
     switch (step) {
       case "phone":
@@ -108,7 +259,10 @@ export default function RegisterScreen() {
     }
   };
 
-  const getSubtitle = () => {
+  // --------------------------------
+  // STEP DESCRIPTION
+  // --------------------------------
+  const getDescription = () => {
     switch (step) {
       case "phone":
         return "Enter your mobile number to get started.";
@@ -117,210 +271,286 @@ export default function RegisterScreen() {
         return `Enter the OTP sent to +91 ${phone}`;
 
       case "mpin":
-        return "Create a secure 6-digit MPIN.";
+        return "Create a 6-digit MPIN for secure login.";
 
       case "confirm":
         return "Enter your MPIN again to confirm.";
     }
   };
 
-  const renderInput = () => {
-    if (step === "phone") {
-      return (
-        <View style={styles.phoneContainer}>
-          <Text style={styles.countryCode}>+91</Text>
-
-          <TextInput
-            value={phone}
-            onChangeText={(text) =>
-              setPhone(text.replace(/[^0-9]/g, "").slice(0, 10))
-            }
-            placeholder="Mobile number"
-            placeholderTextColor="#94A3B8"
-            keyboardType="phone-pad"
-            style={styles.phoneInput}
-          />
-        </View>
-      );
-    }
-
-    if (step === "otp") {
-      return (
-        <TextInput
-          value={otp}
-          onChangeText={(text) =>
-            setOtp(text.replace(/[^0-9]/g, "").slice(0, 6))
-          }
-          placeholder="Enter 6-digit OTP"
-          placeholderTextColor="#94A3B8"
-          keyboardType="number-pad"
-          maxLength={6}
-          style={styles.input}
-          textAlign="center"
-        />
-      );
-    }
-
-    if (step === "mpin") {
-      return (
-        <TextInput
-          value={mpin}
-          onChangeText={(text) =>
-            setMpin(text.replace(/[^0-9]/g, "").slice(0, 6))
-          }
-          placeholder="••••••"
-          placeholderTextColor="#94A3B8"
-          keyboardType="number-pad"
-          secureTextEntry
-          maxLength={6}
-          style={styles.mpinInput}
-          textAlign="center"
-        />
-      );
-    }
-
-    return (
-      <TextInput
-        value={confirmMpin}
-        onChangeText={(text) =>
-          setConfirmMpin(text.replace(/[^0-9]/g, "").slice(0, 6))
-        }
-        placeholder="••••••"
-        placeholderTextColor="#94A3B8"
-        keyboardType="number-pad"
-        secureTextEntry
-        maxLength={6}
-        style={styles.mpinInput}
-        textAlign="center"
-      />
-    );
-  };
-
-  const isValid =
-    step === "phone"
-      ? phone.length === 10
-      : step === "otp"
-      ? otp.length === 6
-      : step === "mpin"
-      ? mpin.length === 6
-      : confirmMpin.length === 6 && confirmMpin === mpin;
-
   return (
-    <SafeAreaView style={styles.container}>
-      <KeyboardAvoidingView
-        style={styles.keyboard}
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
-      >
-        {/* Header */}
-        <View style={styles.topBar}>
-          <Pressable
-            onPress={() => {
-              if (step === "phone") {
-                router.back();
-              } else if (step === "otp") {
-                setStep("phone");
-              } else if (step === "mpin") {
-                setStep("otp");
-              } else {
-                setStep("mpin");
-              }
-            }}
-            style={styles.backButton}
-          >
-            <Text style={styles.backText}>‹</Text>
-          </Pressable>
+    <KeyboardAvoidingView
+      style={styles.container}
+      behavior={
+        Platform.OS === "ios"
+          ? "padding"
+          : undefined
+      }
+    >
+      <View style={styles.content}>
 
-          <Text style={styles.topBrand}>Z-VAULT</Text>
+        {/* HEADER */}
+        <View style={styles.header}>
+          <Text style={styles.logo}>NEXUS</Text>
 
-          <View style={styles.stepIndicator}>
-            <Text style={styles.stepText}>
-              {step === "phone"
-                ? "1/4"
-                : step === "otp"
-                ? "2/4"
-                : step === "mpin"
-                ? "3/4"
-                : "4/4"}
-            </Text>
-          </View>
-        </View>
-
-        {/* Progress */}
-        <View style={styles.progressBackground}>
-          <View
-            style={[
-              styles.progress,
-              {
-                width:
-                  step === "phone"
-                    ? "25%"
-                    : step === "otp"
-                    ? "50%"
-                    : step === "mpin"
-                    ? "75%"
-                    : "100%",
-              },
-            ]}
-          />
-        </View>
-
-        {/* Content */}
-        <View style={styles.content}>
-          <View style={styles.logo}>
-            <Text style={styles.logoText}>Z</Text>
-          </View>
-
-          <Text style={styles.title}>{getTitle()}</Text>
-
-          <Text style={styles.subtitle}>{getSubtitle()}</Text>
-
-          <View style={styles.form}>{renderInput()}</View>
-
-          {step === "otp" && (
-            <Pressable>
-              <Text style={styles.resend}>Resend OTP</Text>
-            </Pressable>
-          )}
-
-          {step === "confirm" &&
-            confirmMpin.length === 6 &&
-            confirmMpin !== mpin && (
-              <Text style={styles.error}>MPINs do not match</Text>
-            )}
-
-          <Pressable
-            disabled={!isValid}
-            onPress={handleContinue}
-            style={[
-              styles.continueButton,
-              isValid && styles.continueButtonActive,
-            ]}
-          >
-            <Text
-              style={[
-                styles.continueText,
-                isValid && styles.continueTextActive,
-              ]}
-            >
-              {step === "confirm" ? "Create account" : "Continue"}
-            </Text>
-          </Pressable>
-        </View>
-
-        {/* Login */}
-        <View style={styles.bottom}>
-          <Text style={styles.bottomText}>
-            Already have an account?
+          <Text style={styles.title}>
+            {getTitle()}
           </Text>
 
-          <Pressable onPress={() => router.replace("/")}>
-            <Text style={styles.loginLink}> Sign in</Text>
-          </Pressable>
+          <Text style={styles.description}>
+            {getDescription()}
+          </Text>
         </View>
-      </KeyboardAvoidingView>
-    </SafeAreaView>
+
+        {/* PROGRESS */}
+        <View style={styles.progressContainer}>
+          {["phone", "otp", "mpin", "confirm"].map(
+            (item, index) => {
+              const steps = [
+                "phone",
+                "otp",
+                "mpin",
+                "confirm",
+              ];
+
+              const currentIndex =
+                steps.indexOf(step);
+
+              return (
+                <View
+                  key={item}
+                  style={[
+                    styles.progressBar,
+                    index <= currentIndex &&
+                      styles.progressActive,
+                  ]}
+                />
+              );
+            }
+          )}
+        </View>
+
+        {/* FORM */}
+        <View style={styles.form}>
+
+          {/* PHONE */}
+          {step === "phone" && (
+            <>
+              <Text style={styles.label}>
+                Mobile number
+              </Text>
+
+              <View style={styles.phoneContainer}>
+                <View style={styles.countryCode}>
+                  <Text style={styles.countryText}>
+                    🇮🇳 +91
+                  </Text>
+                </View>
+
+                <TextInput
+                  value={phone}
+                  onChangeText={(text) => {
+                    setPhone(
+                      text
+                        .replace(/[^0-9]/g, "")
+                        .slice(0, 10)
+                    );
+                    setError("");
+                  }}
+                  placeholder="Mobile number"
+                  placeholderTextColor="#94A3B8"
+                  keyboardType="phone-pad"
+                  maxLength={10}
+                  style={styles.phoneInput}
+                />
+              </View>
+            </>
+          )}
+
+          {/* OTP */}
+          {step === "otp" && (
+            <>
+              <Text style={styles.label}>
+                Verification code
+              </Text>
+
+              <TextInput
+                value={otp}
+                onChangeText={(text) => {
+                  setOtp(
+                    text
+                      .replace(/[^0-9]/g, "")
+                      .slice(0, 6)
+                  );
+                  setError("");
+                }}
+                placeholder="000000"
+                placeholderTextColor="#94A3B8"
+                keyboardType="number-pad"
+                maxLength={6}
+                style={styles.otpInput}
+                textAlign="center"
+                autoFocus
+              />
+
+              <TouchableOpacity
+                onPress={() => {
+                  setStep("phone");
+                  setOtp("");
+                  setConfirmation(null);
+                  setError("");
+                }}
+                style={styles.changeNumber}
+              >
+                <Text style={styles.changeNumberText}>
+                  Change mobile number
+                </Text>
+              </TouchableOpacity>
+            </>
+          )}
+
+          {/* MPIN */}
+          {step === "mpin" && (
+            <>
+              <Text style={styles.label}>
+                Create MPIN
+              </Text>
+
+              <TextInput
+                value={mpin}
+                onChangeText={(text) => {
+                  setMpin(
+                    text
+                      .replace(/[^0-9]/g, "")
+                      .slice(0, 6)
+                  );
+                  setError("");
+                }}
+                placeholder="••••••"
+                placeholderTextColor="#94A3B8"
+                keyboardType="number-pad"
+                secureTextEntry
+                maxLength={6}
+                style={styles.mpinInput}
+                textAlign="center"
+                autoFocus
+              />
+
+              <Text style={styles.hint}>
+                Use a 6-digit MPIN that you can remember.
+              </Text>
+            </>
+          )}
+
+          {/* CONFIRM MPIN */}
+          {step === "confirm" && (
+            <>
+              <Text style={styles.label}>
+                Confirm MPIN
+              </Text>
+
+              <TextInput
+                value={confirmMpin}
+                onChangeText={(text) => {
+                  setConfirmMpin(
+                    text
+                      .replace(/[^0-9]/g, "")
+                      .slice(0, 6)
+                  );
+                  setError("");
+                }}
+                placeholder="••••••"
+                placeholderTextColor="#94A3B8"
+                keyboardType="number-pad"
+                secureTextEntry
+                maxLength={6}
+                style={styles.mpinInput}
+                textAlign="center"
+                autoFocus
+              />
+            </>
+          )}
+
+          {/* ERROR */}
+          {error.length > 0 && (
+            <View style={styles.errorContainer}>
+              <Text style={styles.errorText}>
+                {error}
+              </Text>
+            </View>
+          )}
+
+          {/* CONTINUE */}
+          <TouchableOpacity
+            style={[
+              styles.button,
+              loading && styles.buttonDisabled,
+            ]}
+            onPress={handleContinue}
+            disabled={loading}
+            activeOpacity={0.8}
+          >
+            {loading ? (
+              <ActivityIndicator
+                size="small"
+                color="#FFFFFF"
+              />
+            ) : (
+              <Text style={styles.buttonText}>
+                {step === "phone"
+                  ? "Send OTP"
+                  : step === "otp"
+                  ? "Verify OTP"
+                  : step === "mpin"
+                  ? "Continue"
+                  : "Create Account"}
+              </Text>
+            )}
+          </TouchableOpacity>
+
+          {/* BACK */}
+          {step !== "phone" && (
+            <TouchableOpacity
+              style={styles.backButton}
+              onPress={() => {
+                setError("");
+
+                if (step === "otp") {
+                  setStep("phone");
+                } else if (step === "mpin") {
+                  setStep("otp");
+                } else if (step === "confirm") {
+                  setStep("mpin");
+                }
+              }}
+              disabled={loading}
+            >
+              <Text style={styles.backText}>
+                ← Back
+              </Text>
+            </TouchableOpacity>
+          )}
+        </View>
+
+        {/* FOOTER */}
+        <View style={styles.footer}>
+          <Text style={styles.footerText}>
+            Your account is protected with
+          </Text>
+
+          <Text style={styles.securityText}>
+            Firebase Authentication
+          </Text>
+        </View>
+
+      </View>
+    </KeyboardAvoidingView>
   );
 }
+
+// --------------------------------
+// STYLES
+// --------------------------------
 
 const styles = StyleSheet.create({
   container: {
@@ -328,141 +558,112 @@ const styles = StyleSheet.create({
     backgroundColor: "#F8FAFC",
   },
 
-  keyboard: {
+  content: {
     flex: 1,
     paddingHorizontal: 24,
-  },
-
-  topBar: {
-    height: 60,
-    flexDirection: "row",
-    alignItems: "center",
+    paddingTop: 70,
+    paddingBottom: 30,
     justifyContent: "space-between",
   },
 
-  backButton: {
-    width: 42,
-    height: 42,
-    borderRadius: 14,
-    backgroundColor: "#FFFFFF",
+  header: {
     alignItems: "center",
-    justifyContent: "center",
-    borderWidth: 1,
-    borderColor: "#E2E8F0",
-  },
-
-  backText: {
-    fontSize: 30,
-    color: "#0F172A",
-    marginTop: -4,
-  },
-
-  topBrand: {
-    fontSize: 16,
-    fontWeight: "800",
-    letterSpacing: 2,
-    color: "#111827",
-  },
-
-  stepIndicator: {
-    width: 42,
-    alignItems: "flex-end",
-  },
-
-  stepText: {
-    fontSize: 12,
-    color: "#64748B",
-    fontWeight: "600",
-  },
-
-  progressBackground: {
-    height: 3,
-    backgroundColor: "#E2E8F0",
-    borderRadius: 2,
-    overflow: "hidden",
-  },
-
-  progress: {
-    height: 3,
-    backgroundColor: "#111827",
-    borderRadius: 2,
-  },
-
-  content: {
-    flex: 1,
-    justifyContent: "center",
   },
 
   logo: {
-    width: 52,
-    height: 52,
-    borderRadius: 16,
-    backgroundColor: "#111827",
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 26,
-  },
-
-  logoText: {
-    color: "#FFFFFF",
-    fontSize: 26,
+    fontSize: 18,
     fontWeight: "800",
+    letterSpacing: 3,
+    color: "#2563EB",
+    marginBottom: 28,
   },
 
   title: {
     fontSize: 30,
     fontWeight: "800",
     color: "#0F172A",
-    letterSpacing: -0.7,
+    textAlign: "center",
   },
 
-  subtitle: {
+  description: {
     marginTop: 10,
+    fontSize: 15,
+    lineHeight: 22,
     color: "#64748B",
-    fontSize: 14,
-    lineHeight: 21,
-    maxWidth: 330,
+    textAlign: "center",
+    maxWidth: 320,
+  },
+
+  progressContainer: {
+    flexDirection: "row",
+    gap: 7,
+    marginTop: 35,
+    marginBottom: 30,
+  },
+
+  progressBar: {
+    flex: 1,
+    height: 5,
+    borderRadius: 10,
+    backgroundColor: "#E2E8F0",
+  },
+
+  progressActive: {
+    backgroundColor: "#2563EB",
   },
 
   form: {
-    marginTop: 30,
+    width: "100%",
+  },
+
+  label: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#334155",
+    marginBottom: 9,
   },
 
   phoneContainer: {
-    height: 58,
     flexDirection: "row",
-    alignItems: "center",
+    height: 58,
     backgroundColor: "#FFFFFF",
     borderWidth: 1,
     borderColor: "#E2E8F0",
     borderRadius: 16,
+    overflow: "hidden",
   },
 
   countryCode: {
+    paddingHorizontal: 16,
+    justifyContent: "center",
+    borderRightWidth: 1,
+    borderRightColor: "#E2E8F0",
+    backgroundColor: "#F8FAFC",
+  },
+
+  countryText: {
     fontSize: 15,
-    fontWeight: "700",
+    fontWeight: "600",
     color: "#334155",
-    paddingLeft: 17,
-    paddingRight: 12,
   },
 
   phoneInput: {
     flex: 1,
-    height: "100%",
+    paddingHorizontal: 15,
     fontSize: 16,
     color: "#0F172A",
   },
 
-  input: {
-    height: 58,
+  otpInput: {
+    height: 64,
     backgroundColor: "#FFFFFF",
     borderWidth: 1,
     borderColor: "#E2E8F0",
     borderRadius: 16,
-    fontSize: 18,
-    fontWeight: "600",
+    fontSize: 26,
+    fontWeight: "700",
+    letterSpacing: 10,
     color: "#0F172A",
-    letterSpacing: 5,
   },
 
   mpinInput: {
@@ -471,63 +672,101 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#E2E8F0",
     borderRadius: 16,
-    fontSize: 24,
+    fontSize: 25,
     fontWeight: "700",
+    letterSpacing: 8,
     color: "#0F172A",
-    letterSpacing: 10,
   },
 
-  resend: {
-    color: "#4F46E5",
-    fontWeight: "700",
+  hint: {
+    marginTop: 12,
+    textAlign: "center",
     fontSize: 13,
-    marginTop: 15,
+    color: "#64748B",
   },
 
-  error: {
+  changeNumber: {
+    alignItems: "center",
+    marginTop: 18,
+  },
+
+  changeNumberText: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#2563EB",
+  },
+
+  errorContainer: {
+    marginTop: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 11,
+    backgroundColor: "#FEF2F2",
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#FECACA",
+  },
+
+  errorText: {
     color: "#DC2626",
     fontSize: 13,
-    fontWeight: "600",
-    marginTop: 12,
+    textAlign: "center",
+    lineHeight: 19,
   },
 
-  continueButton: {
-    height: 56,
-    borderRadius: 17,
-    backgroundColor: "#E2E8F0",
+  button: {
+    height: 58,
+    marginTop: 20,
+    borderRadius: 16,
+    backgroundColor: "#2563EB",
+    alignItems: "center",
     justifyContent: "center",
+    shadowOpacity: 0.12,
+    shadowRadius: 8,
+    shadowOffset: {
+      width: 0,
+      height: 4,
+    },
+    elevation: 3,
+  },
+
+  buttonDisabled: {
+    opacity: 0.65,
+  },
+
+  buttonText: {
+    color: "#FFFFFF",
+    fontSize: 16,
+    fontWeight: "700",
+  },
+
+  backButton: {
+    height: 45,
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 8,
+  },
+
+  backText: {
+    color: "#64748B",
+    fontSize: 14,
+    fontWeight: "600",
+  },
+
+  footer: {
     alignItems: "center",
     marginTop: 30,
   },
 
-  continueButtonActive: {
-    backgroundColor: "#111827",
-  },
-
-  continueText: {
+  footerText: {
+    fontSize: 12,
     color: "#94A3B8",
-    fontSize: 15,
-    fontWeight: "700",
   },
 
-  continueTextActive: {
-    color: "#FFFFFF",
-  },
-
-  bottom: {
-    flexDirection: "row",
-    justifyContent: "center",
-    paddingBottom: 25,
-  },
-
-  bottomText: {
+  securityText: {
+    marginTop: 4,
+    fontSize: 12,
+    fontWeight: "600",
     color: "#64748B",
-    fontSize: 14,
-  },
-
-  loginLink: {
-    color: "#4F46E5",
-    fontSize: 14,
-    fontWeight: "700",
   },
 });
+

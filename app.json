@@ -19,7 +19,7 @@
       },
       "predictiveBackGestureEnabled": false,
       "package": "com.universal.zvault",
-      "googleServicesFile": "./google-services.json"
+      "googleServicesFile": "./google-services1.json"
     },
     "web": {
       "output": "static",
