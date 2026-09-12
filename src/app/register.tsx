@@ -18,6 +18,8 @@ import {
   ConfirmationResult,
 } from "@react-native-firebase/auth";
 
+import { Router } from "expo-router";
+
 const auth = getAuth();
 
 type Step = "phone" | "otp" | "mpin" | "confirm";
